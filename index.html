@@ -36,6 +36,12 @@ h1{font-size:clamp(2rem,5vw,3.7rem);line-height:1.05;letter-spacing:-.05em;margi
 <button class="btn secondary" id="undo" disabled>Undo</button>
 <button class="btn secondary" id="resetEdits" disabled>Reset edits</button>
 </div>
+<div class="tools">
+<label>Edge smooth <input id="smooth" type="range" min="0" max="6" value="2" step="1"><span id="smoothVal">2</span></label>
+<label>Subject protection <input id="protect" type="range" min="180" max="250" value="238" step="1"><span id="protectVal">238</span></label>
+<button class="btn secondary" id="applyEdges" disabled>Apply edge settings</button>
+</div>
+<p class="note">Edge smoothing softens jagged cutout edges. Subject protection keeps high-confidence, opaque pixels unchanged. For any subject part removed by AI, use Restore over it before downloading.</p>
 <p class="note">Paint over leftover background with Erase. Use Restore to bring back missing parts of the original image. Brush edits apply to the image shown in the preview.</p>
 </section>
 <section class="panel stage">
@@ -47,11 +53,11 @@ h1{font-size:clamp(2rem,5vw,3.7rem);line-height:1.05;letter-spacing:-.05em;margi
 <p class="foot">Personal browser tool · No account · No photo gallery</p>
 </main>
 <script type="module">
-const $=id=>document.getElementById(id),fileInput=$('file'),drop=$('drop'),removeBtn=$('remove'),resetBtn=$('reset'),showOriginal=$('showOriginal'),canvas=$('resultCanvas'),ctx=canvas.getContext('2d',{willReadFrequently:true}),originalImg=$('originalImg'),empty=$('empty'),state=$('state'),status=$('status'),download=$('download'),brush=$('brush'),brushVal=$('brushVal'),undoBtn=$('undo'),resetEdits=$('resetEdits');
-let originalFile=null,originalUrl=null,removeBackground=null,originalCanvas=document.createElement('canvas'),originalCtx=originalCanvas.getContext('2d'),basePixels=null,undoStack=[],isDrawing=false,lastPoint=null,viewingOriginal=false;
+const $=id=>document.getElementById(id),smooth=$('smooth'),smoothVal=$('smoothVal'),protect=$('protect'),protectVal=$('protectVal'),applyEdges=$('applyEdges'),fileInput=$('file'),drop=$('drop'),removeBtn=$('remove'),resetBtn=$('reset'),showOriginal=$('showOriginal'),canvas=$('resultCanvas'),ctx=canvas.getContext('2d',{willReadFrequently:true}),originalImg=$('originalImg'),empty=$('empty'),state=$('state'),status=$('status'),download=$('download'),brush=$('brush'),brushVal=$('brushVal'),undoBtn=$('undo'),resetEdits=$('resetEdits');
+let originalFile=null,originalUrl=null,removeBackground=null,rawAiPixels=null,originalCanvas=document.createElement('canvas'),originalCtx=originalCanvas.getContext('2d'),basePixels=null,undoStack=[],isDrawing=false,lastPoint=null,viewingOriginal=false;
 function say(msg,kind=''){status.className='status '+kind;status.textContent=msg}
 function setState(s){state.textContent=s}
-function clearAll(){if(originalUrl)URL.revokeObjectURL(originalUrl);originalUrl=null;originalFile=null;basePixels=null;undoStack=[];canvas.width=canvas.height=1;canvas.style.display='none';originalImg.style.display='none';empty.style.display='block';download.style.display='none';removeBtn.disabled=resetBtn.disabled=showOriginal.disabled=undoBtn.disabled=resetEdits.disabled=true;fileInput.value='';setState('Waiting for photo');say('')}
+function clearAll(){if(originalUrl)URL.revokeObjectURL(originalUrl);originalUrl=null;originalFile=null;basePixels=null;rawAiPixels=null;undoStack=[];canvas.width=canvas.height=1;canvas.style.display='none';originalImg.style.display='none';empty.style.display='block';download.style.display='none';removeBtn.disabled=resetBtn.disabled=showOriginal.disabled=undoBtn.disabled=resetEdits.disabled=true;fileInput.value='';setState('Waiting for photo');say('')}
 function loadFile(file){if(!file)return;if(!['image/jpeg','image/png','image/webp'].includes(file.type)){say('Please choose a JPG, PNG, or WebP image.','error');return}if(file.size>20*1024*1024){say('Please choose an image smaller than 20 MB.','error');return}
  originalFile=file;if(originalUrl)URL.revokeObjectURL(originalUrl);originalUrl=URL.createObjectURL(file);clearResultOnly();const im=new Image();im.onload=()=>{originalCanvas.width=im.naturalWidth;originalCanvas.height=im.naturalHeight;originalCtx.clearRect(0,0,originalCanvas.width,originalCanvas.height);originalCtx.drawImage(im,0,0);originalImg.src=originalUrl;originalImg.style.display='block';empty.style.display='none';removeBtn.disabled=false;resetBtn.disabled=false;showOriginal.disabled=false;setState('Photo ready');say(`Loaded ${im.naturalWidth} × ${im.naturalHeight} image. Ready to process.`)};im.onerror=()=>say('Could not read that image. Try another file.','error');im.src=originalUrl}
 function clearResultOnly(){canvas.style.display='none';download.style.display='none';undoStack=[];basePixels=null}
@@ -62,9 +68,30 @@ drop.addEventListener('drop',e=>loadFile(e.dataTransfer.files[0]));
 $('remove').addEventListener('click',async()=>{if(!originalFile)return;removeBtn.disabled=true;setState('Loading AI');say('Loading AI model. First use requires downloading model files; this can take a few minutes.');
 try{if(!removeBackground){const mod=await import('https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.5.5/+esm');removeBackground=mod.removeBackground}
 say('AI is separating the foreground. Please keep this tab open…');const blob=await removeBackground(originalFile,{output:{format:'image/png',quality:1}});
-const img=new Image();const obj=URL.createObjectURL(blob);await new Promise((res,rej)=>{img.onload=res;img.onerror=rej;img.src=obj});canvas.width=img.naturalWidth;canvas.height=img.naturalHeight;ctx.clearRect(0,0,canvas.width,canvas.height);ctx.drawImage(img,0,0);URL.revokeObjectURL(obj);basePixels=ctx.getImageData(0,0,canvas.width,canvas.height);undoStack=[];canvas.style.display='block';originalImg.style.display='none';empty.style.display='none';viewingOriginal=false;setState('AI complete');say('Background removed. Use Erase or Restore to touch up edges, then download.','good');refreshDownload();undoBtn.disabled=resetEdits.disabled=true
+const img=new Image();const obj=URL.createObjectURL(blob);await new Promise((res,rej)=>{img.onload=res;img.onerror=rej;img.src=obj});canvas.width=img.naturalWidth;canvas.height=img.naturalHeight;ctx.clearRect(0,0,canvas.width,canvas.height);ctx.drawImage(img,0,0);URL.revokeObjectURL(obj);rawAiPixels=ctx.getImageData(0,0,canvas.width,canvas.height);applyEdgeProcessing(false);basePixels=ctx.getImageData(0,0,canvas.width,canvas.height);undoStack=[];applyEdges.disabled=false;canvas.style.display='block';originalImg.style.display='none';empty.style.display='none';viewingOriginal=false;setState('AI complete');say('Background removed. Use Erase or Restore to touch up edges, then download.','good');refreshDownload();undoBtn.disabled=resetEdits.disabled=true
 }catch(err){console.error(err);setState('Could not process');say('AI processing failed. Check internet access, then reload and try again. If hosted, verify the model CDN is not blocked.','error')}
 finally{removeBtn.disabled=false}});
+function applyEdgeProcessing(updateBase=true){
+ if(!rawAiPixels)return;
+ const w=canvas.width,h=canvas.height,src=rawAiPixels.data;
+ const radius=Number(smooth.value),keep=Number(protect.value);
+ // Blur only the alpha channel in a temporary canvas. The opaque subject core
+ // is protected from smoothing so edge cleanup won't soften solid interior pixels.
+ const ac=document.createElement('canvas');ac.width=w;ac.height=h;const ax=ac.getContext('2d');
+ const id=ax.createImageData(w,h);for(let i=0;i<src.length;i+=4){const a=src[i+3];id.data[i]=id.data[i+1]=id.data[i+2]=a;id.data[i+3]=255}ax.putImageData(id,0,0);
+ const blurred=document.createElement('canvas');blurred.width=w;blurred.height=h;const bx=blurred.getContext('2d');
+ if(radius>0){bx.filter=`blur(${radius}px)`;bx.drawImage(ac,0,0);bx.filter='none'}else{bx.drawImage(ac,0,0)}
+ const blurData=bx.getImageData(0,0,w,h).data;const out=new ImageData(new Uint8ClampedArray(src),w,h);
+ for(let i=0;i<src.length;i+=4){const a=src[i+3];if(a>=keep){out.data[i+3]=a;continue}
+   // Blend a small amount toward the blurred edge alpha; stronger setting = smoother.
+   const amount=radius/6*0.72;out.data[i+3]=Math.max(0,Math.min(255,Math.round(a*(1-amount)+blurData[i]*amount)));
+ }
+ ctx.putImageData(out,0,0);
+ if(updateBase){basePixels=ctx.getImageData(0,0,w,h);undoStack=[];undoBtn.disabled=true;resetEdits.disabled=false;refreshDownload();say('Edge settings applied. Opaque subject pixels were preserved.','good')}
+}
+smooth.addEventListener('input',()=>smoothVal.textContent=smooth.value);
+protect.addEventListener('input',()=>protectVal.textContent=protect.value);
+applyEdges.addEventListener('click',()=>applyEdgeProcessing(true));
 function refreshDownload(){canvas.toBlob(blob=>{if(!blob)return;if(download.dataset.url)URL.revokeObjectURL(download.dataset.url);const url=URL.createObjectURL(blob);download.dataset.url=url;download.href=url;download.download=(originalFile?.name.replace(/\.[^.]+$/,'')||'image')+'-transparent.png';download.style.display='inline-flex'},'image/png')}
 function point(e){const r=canvas.getBoundingClientRect();return{x:(e.clientX-r.left)*canvas.width/r.width,y:(e.clientY-r.top)*canvas.height/r.height}}
 function stroke(a,b){const mode=document.querySelector('input[name=mode]:checked').value;ctx.save();ctx.lineCap='round';ctx.lineJoin='round';ctx.lineWidth=Number(brush.value)*canvas.width/canvas.getBoundingClientRect().width;if(mode==='erase'){ctx.globalCompositeOperation='destination-out';ctx.strokeStyle='rgba(0,0,0,1)'}else{ctx.globalCompositeOperation='source-over';ctx.strokeStyle='#fff';ctx.lineWidth=ctx.lineWidth;}
