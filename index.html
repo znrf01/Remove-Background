@@ -16,9 +16,9 @@ h1{font-size:clamp(2rem,5vw,3.7rem);line-height:1.05;letter-spacing:-.05em;margi
 </style>
 </head>
 <body><main>
-<div class="top"><div class="brand">✦ My Personal Background</div><div class="pill">🔒 Personal workspace</div></div>
+<div class="top"><div class="brand">✦ My Personal Background Remover</div><div class="pill">🔒 Personal workspace</div></div>
 <h1>Remove photo backgrounds.<br><span>Automatically.</span></h1>
-<p class="intro">Remove the background automatically from people, products, objects, and graphics. The app cleans up transparent fringes and exports a transparent PNG.</p>
+<p class="intro">Remove the background automatically from people, products, objects, and graphics. The app preserves the AI cutout mask without extra thresholding or blur, which can otherwise erase fine subject details.</p>
 <div class="layout">
 <section class="panel">
 <h2>1. Choose your image</h2>
@@ -27,7 +27,7 @@ h1{font-size:clamp(2rem,5vw,3.7rem);line-height:1.05;letter-spacing:-.05em;margi
 <button class="btn primary" id="remove" disabled>✦ Remove background</button>
 <p class="hint">Works with many image types. Complex hair, transparent objects, shadows, and similar-colored edges may need manual touch-ups.</p>
 <div class="privacy">🔐 <span><b>Privacy:</b> The image is processed in this browser tab and isn't sent to your own server. The AI model is downloaded from a public CDN. Avoid sensitive photos on shared devices.</span></div>
-<div class="privacy" style="margin-top:18px">✨ <span><b>Automatic cleanup:</b> After AI removal, the app automatically clears near-transparent fringe pixels and gently smooths the cutout boundary while preserving opaque subject pixels. No manual steps are required.</span></div>
+<div class="privacy" style="margin-top:18px">✨ <span><b>Subject-detail protection:</b> The app keeps the AI model's original transparency mask and does not apply extra thresholding or blur that could erase fine details. The AI model itself can still misclassify parts of a subject.</span></div>
 </section>
 <section class="panel stage">
 <div class="stagehead"><h2>2. Your result</h2><span class="pill" id="state">Waiting for photo</span></div>
@@ -58,27 +58,12 @@ for(const ev of ['dragenter','dragover'])drop.addEventListener(ev,e=>{e.preventD
 for(const ev of ['dragleave','drop'])drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('drag')});
 drop.addEventListener('drop',e=>loadFile(e.dataTransfer.files[0]));
 function cleanAlpha(img){
- const w=img.naturalWidth,h=img.naturalHeight;
- canvas.width=w;canvas.height=h;ctx.clearRect(0,0,w,h);ctx.drawImage(img,0,0);
- let imageData=ctx.getImageData(0,0,w,h),d=imageData.data;
- // Hard-clear very low alpha fringe/noise; preserve all meaningful subject opacity.
- for(let i=3;i<d.length;i+=4){if(d[i]<=10)d[i]=0;}
- // Slightly soften only the alpha boundary. Pixels with high alpha stay untouched.
- const alphaCanvas=document.createElement('canvas');alphaCanvas.width=w;alphaCanvas.height=h;
- const ax=alphaCanvas.getContext('2d');const aid=ax.createImageData(w,h);
- for(let i=0;i<d.length;i+=4){const a=d[i+3];aid.data[i]=aid.data[i+1]=aid.data[i+2]=a;aid.data[i+3]=255}
- ax.putImageData(aid,0,0);
- const blurred=document.createElement('canvas');blurred.width=w;blurred.height=h;
- const bx=blurred.getContext('2d');bx.filter='blur(0.7px)';bx.drawImage(alphaCanvas,0,0);bx.filter='none';
- const bd=bx.getImageData(0,0,w,h).data;
- for(let i=0;i<d.length;i+=4){
-   const a=d[i+3];
-   if(a>=248)continue; // keep solid subject pixels unchanged
-   if(a===0)continue;
-   d[i+3]=Math.max(0,Math.min(255,Math.round(a*0.72+bd[i]*0.28)));
-   if(d[i+3]<8)d[i+3]=0;
- }
- ctx.putImageData(imageData,0,0);
+ // Preserve the AI model's original alpha mask exactly.
+ // Extra thresholding or blur can remove fine subject details (fingers, hair,
+ // glasses, transparent edges), so do not alter the model's mask here.
+ canvas.width=img.naturalWidth;canvas.height=img.naturalHeight;
+ ctx.clearRect(0,0,canvas.width,canvas.height);
+ ctx.drawImage(img,0,0);
 }
 function refreshDownload(){
  canvas.toBlob(blob=>{if(!blob)return;
@@ -96,7 +81,7 @@ removeBtn.addEventListener('click',async()=>{
   const img=new Image(),obj=URL.createObjectURL(blob);
   await new Promise((res,rej)=>{img.onload=res;img.onerror=rej;img.src=obj});
   cleanAlpha(img);URL.revokeObjectURL(obj);originalImg.style.display='none';canvas.style.display='block';empty.style.display='none';
-  refreshDownload();setState('Complete');say('Background removed and edge cleanup applied automatically. Download your transparent PNG.','good')
+  refreshDownload();setState('Complete');say('Background removed. The AI's original mask is preserved to avoid further loss of subject details.','good')
  }catch(err){console.error(err);setState('Could not process');say('AI processing failed. Check your internet connection or try a smaller image. If hosted, confirm the model CDN is accessible.','error')}
  finally{removeBtn.disabled=false}
 });
